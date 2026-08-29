@@ -3,3 +3,5 @@ dist/
 *.db
 *.db-wal
 *.db-shm
+backend-nodes-export.json
+backend-skills-list.txt

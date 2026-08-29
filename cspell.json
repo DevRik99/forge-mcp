@@ -1,23 +1,15 @@
 {
   "version": "0.2",
-  "language": "en,es",
+  "language": "en",
   "words": [
     "forge",
-    "fase",
-    "fases",
-    "activos",
-    "activo",
-    "reanuda",
-    "reanudar",
-    "siguiente",
-    "iniciar",
-    "tareas",
-    "clasificar",
-    "clarificar",
-    "completar",
-    "estado",
     "sqlite",
     "pipeline"
   ],
-  "ignorePaths": ["dist/**", "node_modules/**", "*.db"]
+  "ignorePaths": [
+    "dist/**",
+    "node_modules/**",
+    "*.db",
+    "skills"
+  ]
 }

@@ -1,5 +1,5 @@
 {
-  "razon": "renombrar las 5 tools del MCP de espanol a ingles: forge_iniciar->forge_start, forge_estado->forge_status, forge_siguiente->forge_next, forge_completar_fase->forge_complete_phase, forge_tareas->forge_tasks. Consistencia (todo el codigo en ingles). Local, renombrado mecanico",
-  "desde": "2026-08-29T05:08:18.837Z",
-  "hasta": "2026-08-29T05:38:18.837Z"
+  "razon": "enriquecer phases.ts del MCP: cada fase lleva el systemPrompt REAL del nodo del backend (FLOW_GUARDS/SKILL_DOCS/SETUP/PLANNER/QA) + sus skills del SKILL_MAP + que produce, NO un goal generico. Deja de ser cascaron. Datos portados del backend. Local, reversible",
+  "desde": "2026-08-29T05:51:31.897Z",
+  "hasta": "2026-08-29T06:21:31.898Z"
 }

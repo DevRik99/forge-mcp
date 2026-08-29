@@ -1,0 +1,16 @@
+# Reglas duras — vue-nuxt-master
+
+| Regla | Verificación | Script o ruta | Qué previene |
+|-------|-------------|---------------|--------------|
+| Siempre `<script setup lang="ts">`; nunca Options API ni `defineComponent` como wrapper | linter | `vue/component-api-style` (eslint-plugin-vue), opción `["script-setup"]` | componentes con dos estilos de API mezclados en el mismo proyecto |
+| Nunca usar `any`; usar `unknown` + type guard cuando la forma es genuinamente desconocida | linter | `@typescript-eslint/no-explicit-any` | pérdida de seguridad de tipos, errores que sólo aparecen en runtime |
+| No `enums`; usar `const` objects con `as const` | linter | regla custom sobre `no-restricted-syntax` sintaxis `TSEnumDeclaration` | los problemas conocidos de los enums de TS (no tree-shakeable, comportamiento inconsistente en runtime) |
+| Sin magic strings ni números; nombrar toda constante | linter | `no-magic-numbers` (ESLint core) / `@typescript-eslint/no-magic-numbers` | valores sin significado inline, imposibles de rastrear en un refactor |
+| Nunca `v-html` con contenido no sanitizado | linter | `vue/no-v-html` (eslint-plugin-vue) | XSS vía inyección de HTML no confiable |
+| Server routes viven en `server/api/`, nunca mezcladas con `pages/` | script | comprobación de árbol de archivos: ningún `defineEventHandler` fuera de `server/`; verificado por `templates/check-server-routes-location.mjs` | rutas de servidor con código de cliente, exposición accidental de lógica server-side |
+| No importar manualmente lo que Nuxt ya auto-importa (`ref`, `useFetch`, composables de `composables/`, utils de `utils/`) | linter | `no-restricted-imports` configurado con la lista de auto-imports de Nuxt | imports redundantes y estilo inconsistente entre componentes |
+| Textos de UI nunca hardcodeados cuando el proyecto usa i18n; usar `$t()` / `useI18n().t()` | linter | `@intlify/vue-i18n/no-raw-text` | strings sin traducir, imposibilidad de internacionalizar la app |
+| Ningún secreto (`DATABASE_URL`, claves, tokens) expuesto en `runtimeConfig.public` | script | grep sobre `nuxt.config.ts`: ninguna clave con patrón de secreto bajo `runtimeConfig.public`; verificado por `templates/check-no-secrets-in-runtime-config-public.mjs` | filtrado de credenciales al bundle de cliente, visible para cualquiera |
+| `@nuxt/devtools` deshabilitado en producción | script | comprobar `devtools: { enabled: process.env.NODE_ENV === 'development' }` en `nuxt.config.ts`; verificado por `templates/check-devtools-disabled-in-production.mjs` | exposición del panel de devtools en producción (CVE-2024-23657) |
+| Todo input de servidor se valida con Zod (`getValidatedRouterParams` / `getValidatedQuery` / `readValidatedBody`); nunca confiar en `readBody` crudo | script (heurística) | grep de `readBody(` sin `getValidatedRouterParams`/`readValidatedBody` en el mismo handler — riesgo de falsos positivos, revisar hallazgos; verificado por `templates/check-server-input-validation.mjs` | inputs de servidor sin validar llegando a lógica de negocio |
+| Nunca destructurar un `reactive()` directamente; usar `toRefs()` o cambiar a `ref()` | no automatizable | — ningún plugin de ESLint vigente distingue este caso de forma determinista; requiere análisis de flujo de datos | pérdida de reactividad silenciosa, bug difícil de reproducir |

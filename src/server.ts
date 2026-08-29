@@ -18,6 +18,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { PHASES, findPhase } from './phases.js';
 import { Store, nextPhaseId, type Run } from './store.js';
+import { listSkills, skillsForPhase, readSkill } from './skills.js';
 
 /** Texto de una fase para devolvérselo a Claude: qué toca hacer y qué cierra la fase. */
 function describePhase(phaseId: string): string {
@@ -26,10 +27,15 @@ function describePhase(phaseId: string): string {
   const userNote = phase.needsUser
     ? '\nThis phase involves a USER DECISION: bring the questions to the user, do not decide alone.'
     : '';
+  const skillsNote =
+    phase.skills.length > 0
+      ? `\nSKILLS: load these before executing — ${phase.skills.join(', ')}`
+      : '';
   return (
     `PHASE: ${phase.title} (${phase.id})\n` +
     `GOAL: ${phase.goal}\n` +
-    `CLOSES WITH: ${phase.produces}${userNote}\n\n` +
+    `CLOSES WITH: ${phase.produces}${userNote}${skillsNote}\n\n` +
+    `SYSTEM PROMPT (execute this phase with this exact criterion):\n${phase.systemPrompt}\n\n` +
     `When done, call forge_complete_phase with a summary of what you did/decided.`
   );
 }
@@ -222,6 +228,52 @@ export function buildServer(store: Store, now: () => number): McpServer {
           {
             type: 'text',
             text: `Active runs (${String(runs.length)}):\n${lines.join('\n')}\n\nResume one with forge_next runId=<id>.`,
+          },
+        ],
+      };
+    },
+  );
+
+  // Lista las skills disponibles; con phase, las del SKILL_MAP de esa fase.
+  server.registerTool(
+    'forge_skills',
+    {
+      description:
+        'Lists available skills. With a phase key (brainstorm/design/frontend/quality/qa/monetization/product), returns the skills that phase must load (from the SKILL_MAP). Without it, lists the whole arsenal.',
+      inputSchema: {
+        phase: z
+          .string()
+          .optional()
+          .describe('Phase key to filter skills by (optional).'),
+      },
+    },
+    ({ phase }) => {
+      const skills = phase ? skillsForPhase(phase) : listSkills();
+      const text = phase
+        ? `Skills for phase "${phase}": ${skills.length ? skills.join(', ') : '(none)'}.\nLoad each with forge_skill.`
+        : `Available skills (${String(skills.length)}):\n${skills.join(', ')}`;
+      return { content: [{ type: 'text', text }] };
+    },
+  );
+
+  // Devuelve el contenido del SKILL.md de una skill, para que Claude la cargue.
+  server.registerTool(
+    'forge_skill',
+    {
+      description:
+        'Returns the SKILL.md content of a skill so you can load and apply it in the current phase.',
+      inputSchema: {
+        name: z.string().describe('Skill name (a folder in the arsenal).'),
+      },
+    },
+    ({ name }) => {
+      const content = readSkill(name);
+      return {
+        content: [
+          {
+            type: 'text',
+            text:
+              content ?? `No skill "${name}" found (or it has no SKILL.md).`,
           },
         ],
       };
