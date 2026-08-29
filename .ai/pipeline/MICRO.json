@@ -1,5 +1,5 @@
 {
-  "razon": "traer el eslint config estricto del backend al forge-mcp: base universal (TS strictTypeChecked+stylistic, cspell, unicorn, unused-imports, naming-convention, safety, prettier) quitando los bloques NestJS-especificos (controller/dto/entity/module/guard/pipe/interceptor/filter/middleware/strategy/enum) que no aplican a un MCP TS puro. Local, conocido, reversible",
-  "desde": "2026-08-29T04:58:10.476Z",
-  "hasta": "2026-08-29T05:28:10.476Z"
+  "razon": "renombrar las 5 tools del MCP de espanol a ingles: forge_iniciar->forge_start, forge_estado->forge_status, forge_siguiente->forge_next, forge_completar_fase->forge_complete_phase, forge_tareas->forge_tasks. Consistencia (todo el codigo en ingles). Local, renombrado mecanico",
+  "desde": "2026-08-29T05:08:18.837Z",
+  "hasta": "2026-08-29T05:38:18.837Z"
 }

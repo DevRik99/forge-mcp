@@ -7,11 +7,11 @@
  * llama de forma natural.
  *
  * Tools:
- *  - forge_iniciar(request, cwd)   → arranca un run nuevo; devuelve la primera fase y su objetivo.
- *  - forge_estado(runId?)          → en qué fase está un run (o el único activo); qué se hizo y qué falta.
- *  - forge_siguiente(runId?)       → la fase ACTUAL con su objetivo detallado (qué hacer ahora).
- *  - forge_completar_fase(runId, resumen) → cierra la fase actual con su artefacto y avanza a la siguiente.
- *  - forge_tareas()                → lista los runs activos (para reanudar desde cualquier sesión).
+ *  - forge_start(request, cwd)   → arranca un run nuevo; devuelve la primera fase y su objetivo.
+ *  - forge_status(runId?)          → en qué fase está un run (o el único activo); qué se hizo y qué falta.
+ *  - forge_next(runId?)       → la fase ACTUAL con su objetivo detallado (qué hacer ahora).
+ *  - forge_complete_phase(runId, resumen) → cierra la fase actual con su artefacto y avanza a la siguiente.
+ *  - forge_tasks()                → lista los runs activos (para reanudar desde cualquier sesión).
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -30,7 +30,7 @@ function describePhase(phaseId: string): string {
     `PHASE: ${phase.title} (${phase.id})\n` +
     `GOAL: ${phase.goal}\n` +
     `CLOSES WITH: ${phase.produces}${userNote}\n\n` +
-    `When done, call forge_completar_fase with a summary of what you did/decided.`
+    `When done, call forge_complete_phase with a summary of what you did/decided.`
   );
 }
 
@@ -51,10 +51,10 @@ export function buildServer(store: Store, now: () => number): McpServer {
 
   // Arranca un run nuevo del pipeline y devuelve la primera fase.
   server.registerTool(
-    'forge_iniciar',
+    'forge_start',
     {
       description:
-        'Start a new forge pipeline run for a request. Returns the first phase (classify) and its goal. From here, follow the flow phase by phase using forge_siguiente and forge_completar_fase — do not skip phases.',
+        'Start a new forge pipeline run for a request. Returns the first phase (classify) and its goal. From here, follow the flow phase by phase using forge_next and forge_complete_phase — do not skip phases.',
       inputSchema: {
         request: z.string().describe("The user's request, verbatim."),
         cwd: z.string().describe('Project directory where the pipeline runs.'),
@@ -69,7 +69,7 @@ export function buildServer(store: Store, now: () => number): McpServer {
             type: 'text',
             text:
               `Run ${runId} started.\n\n${describePhase(run.currentPhase)}\n\n` +
-              `— The forge pipeline guides you phase by phase. Do not write code or finish until every phase is closed with forge_completar_fase.`,
+              `— The forge pipeline guides you phase by phase. Do not write code or finish until every phase is closed with forge_complete_phase.`,
           },
         ],
       };
@@ -78,7 +78,7 @@ export function buildServer(store: Store, now: () => number): McpServer {
 
   // En qué fase está un run y su progreso.
   server.registerTool(
-    'forge_estado',
+    'forge_status',
     {
       description:
         'Shows which phase a run is in and its progress (done / pending). If no runId is given and exactly one run is active, uses that one.',
@@ -105,7 +105,7 @@ export function buildServer(store: Store, now: () => number): McpServer {
 
   // La fase actual con su objetivo detallado.
   server.registerTool(
-    'forge_siguiente',
+    'forge_next',
     {
       description:
         'Returns the CURRENT phase with its detailed goal: what to do now. Call this when you are unsure what comes next.',
@@ -137,7 +137,7 @@ export function buildServer(store: Store, now: () => number): McpServer {
 
   // Cierra la fase actual y avanza a la siguiente.
   server.registerTool(
-    'forge_completar_fase',
+    'forge_complete_phase',
     {
       description:
         'Closes the CURRENT phase with a summary of what you did/decided, and advances to the next one. The summary is persisted (for resuming). Do not close a phase you have not actually done.',
@@ -200,7 +200,7 @@ export function buildServer(store: Store, now: () => number): McpServer {
 
   // Lista los runs activos (para reanudar desde cualquier sesión).
   server.registerTool(
-    'forge_tareas',
+    'forge_tasks',
     {
       description:
         'Lists the active pipeline runs (to resume from any session). Shows id, request and current phase.',
@@ -221,7 +221,7 @@ export function buildServer(store: Store, now: () => number): McpServer {
         content: [
           {
             type: 'text',
-            text: `Active runs (${String(runs.length)}):\n${lines.join('\n')}\n\nResume one with forge_siguiente runId=<id>.`,
+            text: `Active runs (${String(runs.length)}):\n${lines.join('\n')}\n\nResume one with forge_next runId=<id>.`,
           },
         ],
       };
@@ -248,7 +248,7 @@ function notFound(runId?: string): {
         type: 'text',
         text: runId
           ? `No run with id ${runId}.`
-          : 'Could not infer the run (several or none active). Pass runId, or check forge_tareas.',
+          : 'Could not infer the run (several or none active). Pass runId, or check forge_tasks.',
       },
     ],
   };
