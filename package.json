@@ -1,6 +1,6 @@
 {
   "name": "@devrik-tools/forge-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "MCP director for the forge pipeline: tells Claude which phase to run, validates each phase with real evidence, and persists state in a global SQLite DB to resume across sessions. Claude is the executor.",
   "main": "dist/server.js",
   "scripts": {
