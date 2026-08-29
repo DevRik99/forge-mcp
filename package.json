@@ -1,5 +1,5 @@
 {
-  "name": "@devrik99/forge-mcp",
+  "name": "@devrik-tools/forge-mcp",
   "version": "1.0.0",
   "description": "MCP director del pipeline forge (modo Claude-ejecutor): dice qué fase toca y valida el flujo con evidencia; el estado persiste en SQLite global para reanudar en cualquier sesión.",
   "main": "dist/server.js",
