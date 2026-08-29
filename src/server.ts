@@ -16,8 +16,12 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { pathToFileURL } from 'node:url';
+import { homedir } from 'node:os';
+import { join, dirname } from 'node:path';
+import { mkdirSync } from 'node:fs';
 import { PHASES, findPhase } from './phases.js';
-import { Store, nextPhaseId, type Run } from './store.js';
+import { Store, nextPhaseId, StalePhaseError, type Run } from './store.js';
 import { listSkills, skillsForPhase, readSkill } from './skills.js';
 
 /** Texto de una fase para devolvérselo a Claude: qué toca hacer y qué cierra la fase. */
@@ -50,6 +54,131 @@ function progressOf(store: Store, run: Run): string {
     return `[ ] ${phase.title}`;
   });
   return lines.join('\n');
+}
+
+/** Input crudo (ya parseado por zod) de `forge_complete_phase`. */
+interface CompletePhaseInput {
+  runId?: string;
+  summary: string;
+  evidence?: Record<string, unknown>;
+}
+
+/** Respuesta MCP de texto simple, opcionalmente marcada como error. */
+interface TextResult {
+  [key: string]: unknown;
+  content: { type: 'text'; text: string }[];
+  isError?: boolean;
+}
+
+/** Arma una respuesta de rechazo (isError) con un mensaje accionable. */
+function rejection(text: string): TextResult {
+  return { content: [{ type: 'text', text }], isError: true };
+}
+
+/**
+ * Handler PURO de `forge_complete_phase`, extraído para poder testearlo sin transporte MCP.
+ * Valida, en orden: needsUser (requiere evidence.userConfirmed===true), optional+skipped (requiere
+ * evidence.reason no trivial), y completionSchema de la fase (si tiene uno) contra `evidence`. Solo si
+ * todo pasa, avanza el run. `summary` ya viene validado (.min(10)) por el inputSchema de la tool.
+ */
+export function completePhaseHandler(
+  store: Store,
+  now: () => number,
+  input: CompletePhaseInput,
+): TextResult {
+  const { runId, summary, evidence } = input;
+  const run = resolveRun(store, runId);
+  if (!run) return notFound(runId);
+  if (run.status === 'done') {
+    return {
+      content: [{ type: 'text', text: `Run ${run.id} already finished.` }],
+    };
+  }
+
+  const phase = findPhase(run.currentPhase);
+  if (!phase) {
+    return rejection(
+      `Internal error: current phase "${run.currentPhase}" of run ${run.id} is not a known phase. Cannot validate or advance.`,
+    );
+  }
+
+  // 1) needsUser: la marca NO prueba que el usuario decidió de verdad, solo exige que Claude declare
+  //    explícitamente que trajo la decisión al usuario antes de cerrar la fase.
+  if (phase.needsUser && evidence?.userConfirmed !== true) {
+    return rejection(
+      `Cannot close phase "${phase.id}": it needs a USER decision. Pass evidence.userConfirmed=true ` +
+        `only after you actually brought the questions/options to the user and got their answer ` +
+        `(this flag does not itself prove that happened — it only records that you claim it did).`,
+    );
+  }
+
+  // 2) optional + skipped: si se declara skipped, exige una razón real; si no viene skipped, sigue el
+  //    flujo normal de cierre (incluida su validación de completionSchema si la fase tiene una).
+  const skipped = evidence?.skipped;
+  if (phase.optional && skipped === true) {
+    const reason = evidence.reason;
+    if (typeof reason !== 'string' || reason.trim().length < 5) {
+      return rejection(
+        `Cannot skip optional phase "${phase.id}": evidence.reason must be a real explanation (min 5 chars) of why it does not apply.`,
+      );
+    }
+  } else if (phase.completionSchema) {
+    // 3) completionSchema: valida el contenido real del evidence contra el contrato de la fase.
+    const result = phase.completionSchema.safeParse(evidence ?? {});
+    if (!result.success) {
+      const issues = result.error.issues
+        .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
+        .join('; ');
+      return rejection(
+        `Cannot close phase "${phase.id}": evidence does not satisfy its contract — ${issues}. ` +
+          `Provide evidence matching what this phase actually produces.`,
+      );
+    }
+  }
+
+  // BUG A/B: closePhaseAndAdvance usa un optimistic lock (WHERE current_phase = ?) y señala un cierre
+  // obsoleto lanzando StalePhaseError en vez de avanzar silenciosamente. Esto puede pasar tanto por
+  // una carrera real (otro caller cerró esta fase primero) como por un caller con estado desactualizado
+  // (pasó una fase que ya no es la actual) — ambos casos piden lo mismo: refrescar y reintentar.
+  const next = nextPhaseId(run.currentPhase);
+  try {
+    if (next === null) {
+      store.closePhaseAndAdvance(
+        run.id,
+        run.currentPhase,
+        summary,
+        run.currentPhase,
+        now(),
+      );
+      store.finishRun(run.id, now());
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Phase "${run.currentPhase}" closed. It was the last one — run ${run.id} COMPLETE. Every pipeline phase passed.`,
+          },
+        ],
+      };
+    }
+    store.closePhaseAndAdvance(run.id, run.currentPhase, summary, next, now());
+  } catch (error) {
+    if (error instanceof StalePhaseError) {
+      return rejection(
+        `Cannot close phase "${phase.id}" of run ${run.id}: another caller already advanced this run ` +
+          `in the meantime, so your phase close is stale. Call forge_next (or forge_status) to see the ` +
+          `real current state before retrying.`,
+      );
+    }
+    throw error;
+  }
+  return {
+    content: [
+      {
+        type: 'text',
+        text: `Phase "${run.currentPhase}" closed. Now:\n\n${describePhase(next)}`,
+      },
+    ],
+  };
 }
 
 export function buildServer(store: Store, now: () => number): McpServer {
@@ -146,7 +275,7 @@ export function buildServer(store: Store, now: () => number): McpServer {
     'forge_complete_phase',
     {
       description:
-        'Closes the CURRENT phase with a summary of what you did/decided, and advances to the next one. The summary is persisted (for resuming). Do not close a phase you have not actually done.',
+        'Closes the CURRENT phase with a summary of what you did/decided, and advances to the next one. The summary is persisted (for resuming). Do not close a phase you have not actually done. Phases with a completionSchema (gates, qa, design, plan), phases needing user confirmation, and optional phases require structured `evidence` matching their contract — see the rejection message if it is missing or invalid.',
       inputSchema: {
         runId: z
           .string()
@@ -154,54 +283,24 @@ export function buildServer(store: Store, now: () => number): McpServer {
           .describe('Run id; optional when exactly one run is active.'),
         summary: z
           .string()
+          .min(10, 'summary must not be empty/trivial')
           .describe(
             'What you did/decided in this phase (the artifact that closes it).',
           ),
+        evidence: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe(
+            'Structured evidence closing this phase (required shape depends on the phase): ' +
+              'gates needs {lintExit,buildExit,testExit} all 0; qa needs {passed:true,failures,adversarial:{attacksTried,...}}; ' +
+              'design needs {brainstormDone,designBriefDone,qaPlanDone,qualityGuideDone} all true; ' +
+              'plan needs {leaves:[{leafId,block,owns},...]}; a phase needing user input needs {userConfirmed:true}; ' +
+              'skipping an optional phase needs {skipped:true,reason}.',
+          ),
       },
     },
-    ({ runId, summary }) => {
-      const run = resolveRun(store, runId);
-      if (!run) return notFound(runId);
-      if (run.status === 'done') {
-        return {
-          content: [{ type: 'text', text: `Run ${run.id} already finished.` }],
-        };
-      }
-      const next = nextPhaseId(run.currentPhase);
-      if (next === null) {
-        store.closePhaseAndAdvance(
-          run.id,
-          run.currentPhase,
-          summary,
-          run.currentPhase,
-          now(),
-        );
-        store.finishRun(run.id, now());
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Phase "${run.currentPhase}" closed. It was the last one — run ${run.id} COMPLETE. Every pipeline phase passed.`,
-            },
-          ],
-        };
-      }
-      store.closePhaseAndAdvance(
-        run.id,
-        run.currentPhase,
-        summary,
-        next,
-        now(),
-      );
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Phase "${run.currentPhase}" closed. Now:\n\n${describePhase(next)}`,
-          },
-        ],
-      };
-    },
+    ({ runId, summary, evidence }) =>
+      completePhaseHandler(store, now, { runId, summary, evidence }),
   );
 
   // Lista los runs activos (para reanudar desde cualquier sesión).
@@ -283,11 +382,25 @@ export function buildServer(store: Store, now: () => number): McpServer {
   return server;
 }
 
-/** Resuelve el run por id, o el único activo si no se da id. */
-function resolveRun(store: Store, runId?: string): Run | null {
+/**
+ * Resuelve el run por id, o el único activo si no se da id.
+ *
+ * BUG E: con la DB pasando a ser GLOBAL (compartida entre proyectos), puede haber runs activos de
+ * MÚLTIPLES proyectos/cwd simultáneamente — "el único activo" en toda la DB deja de ser una noción
+ * útil de ambigüedad. Decisión: cuando hay más de un run activo mirando la DB entera, se desambigua
+ * primero por `process.cwd()` (el proyecto desde el que efectivamente se está llamando este proceso
+ * MCP) — si exactamente uno de los runs activos tiene ese mismo cwd, se resuelve a ese sin pedir
+ * runId. Si hay más de uno con el MISMO cwd, sigue siendo responsabilidad del caller pasar runId
+ * (ambiguo de verdad, ya no se puede resolver por proceso). Este filtro por cwd es un fallback: si ya
+ * hay un único run activo en TODA la DB (caso típico de un solo proyecto usando forge), se resuelve
+ * igual que antes sin siquiera mirar cwd.
+ */
+export function resolveRun(store: Store, runId?: string): Run | null {
   if (runId) return store.getRun(runId);
   const active = store.activeRuns();
-  return active.length === 1 ? active[0] : null;
+  if (active.length === 1) return active[0];
+  const activeHere = store.activeRunsForCwd(process.cwd());
+  return activeHere.length === 1 ? activeHere[0] : null;
 }
 
 /** Respuesta cuando no se encuentra el run pedido. */
@@ -306,18 +419,34 @@ function notFound(runId?: string): {
   };
 }
 
+/** El path por default de la DB: única y global en `~/.forge/forge-mcp.db`, compartida entre todos
+ *  los proyectos que usen este MCP (BUG E) — antes era relativa al cwd del proceso, lo que dejaba una
+ *  DB distinta por proyecto/carpeta desde donde se lanzara el server. */
+const DEFAULT_DB_PATH = join(homedir(), '.forge', 'forge-mcp.db');
+
 /** Arranque: abre el store y sirve por stdio (como lo lanza el cliente MCP). */
 async function main(): Promise<void> {
-  const databasePath = process.env.FORGE_MCP_DB ?? 'forge-mcp.db';
+  const databasePath = process.env.FORGE_MCP_DB ?? DEFAULT_DB_PATH;
+  // Asegura que el directorio de la DB exista (p. ej. ~/.forge/ en un homedir nuevo). Solo hace falta
+  // para el default: si FORGE_MCP_DB es un override explícito, se asume que su directorio ya existe
+  // o que el caller lo maneja — igual mkdirSync(dirname(...)) es inofensivo también en ese caso.
+  mkdirSync(dirname(databasePath), { recursive: true });
   const store = new Store(databasePath);
   const server = buildServer(store, () => Date.now());
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
 
-main().catch((error: unknown) => {
-  process.stderr.write(
-    `forge-mcp fatal: ${error instanceof Error ? error.message : String(error)}\n`,
-  );
-  process.exit(1);
-});
+// Solo arranca el server stdio cuando este archivo es el ENTRYPOINT ejecutado directamente (node
+// dist/server.js). Al ser importado (p. ej. desde server.test.ts para reusar completePhaseHandler),
+// NO debe conectar un transporte stdio que se queda esperando stdin para siempre.
+const isEntryPoint = import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isEntryPoint) {
+  main().catch((error: unknown) => {
+    process.stderr.write(
+      `forge-mcp fatal: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    process.exit(1);
+  });
+}

@@ -13,7 +13,14 @@
  * `systemPrompt` es el prompt REAL y completo de cada nodo del backend (copiado textual de
  * `backend-nodes-export.json`), para que Claude ejecute la fase con el mismo criterio que el worker
  * del backend habría recibido. `skills` son las skills de Claude Code que esa fase debe cargar.
+ *
+ * `completionSchema` valida el CONTENIDO real del `evidence` con que se cierra la fase (no solo que
+ * `summary` sea un string no vacío): fuerza que gates reporte exit codes en 0, que QA reporte
+ * `passed:true` con intentos adversariales reales, etc. Las fases sin `completionSchema` siguen
+ * exigiendo solo `summary` no trivial (ver server.ts). `needsUser` y `optional` se validan de forma
+ * GENÉRICA en server.ts (no como completionSchema) porque aplican transversalmente a cualquier fase.
  */
+import { z, type ZodType } from 'zod';
 
 /** Una fase del pipeline: qué es, qué se espera que Claude produzca, y si puede omitirse. */
 export interface Phase {
@@ -33,6 +40,12 @@ export interface Phase {
   needsUser: boolean;
   /** Si la fase puede omitirse cuando no aplica al pedido (p. ej. deploy en un cambio interno). */
   optional: boolean;
+  /**
+   * Schema opcional que valida el CONTENIDO del `evidence` estructurado con que se cierra la fase.
+   * Si está presente, `forge_complete_phase` RECHAZA el cierre cuando `evidence` no lo satisface.
+   * Ausente = solo se exige `summary` no trivial (comportamiento por defecto).
+   */
+  completionSchema?: ZodType;
 }
 
 /**
@@ -101,6 +114,13 @@ export const PHASES: Phase[] = [
     produces: 'design / QA-plan / quality documents',
     needsUser: false,
     optional: false,
+    // El systemPrompt exige, en orden, 4 entregables: brainstorm, design brief, QA plan, quality guide.
+    completionSchema: z.object({
+      brainstormDone: z.literal(true),
+      designBriefDone: z.literal(true),
+      qaPlanDone: z.literal(true),
+      qualityGuideDone: z.literal(true),
+    }),
   },
   {
     id: 'plan',
@@ -112,6 +132,18 @@ export const PHASES: Phase[] = [
     produces: 'task plan (disjoint owns + tests per task)',
     needsUser: false,
     optional: false,
+    // Espeja la forma JSON que el systemPrompt pide: {"leaves":[{leafId, block, owns, ...}]}.
+    completionSchema: z.object({
+      leaves: z
+        .array(
+          z.object({
+            leafId: z.string().min(1),
+            block: z.string().min(1),
+            owns: z.array(z.string()).min(1),
+          }),
+        )
+        .min(1),
+    }),
   },
   {
     id: 'build',
@@ -134,6 +166,24 @@ export const PHASES: Phase[] = [
     produces: 'gates green (lint + build + tests)',
     needsUser: false,
     optional: false,
+    // Contrato genérico de forge: los 3 exit codes siempre se exigen en 0, sin importar si el repo
+    // destino tiene o no un script de test real en su package.json — es responsabilidad de la fase
+    // "gates" reportar 0 igual (p. ej. testExit:0 si no hay tests que correr, nunca omitir el campo).
+    completionSchema: z
+      .object({
+        lintExit: z.number(),
+        buildExit: z.number(),
+        testExit: z.number(),
+      })
+      .refine(
+        (evidence) =>
+          evidence.lintExit === 0 &&
+          evidence.buildExit === 0 &&
+          evidence.testExit === 0,
+        {
+          message: 'gates must all exit 0',
+        },
+      ),
   },
   {
     id: 'qa',
@@ -145,6 +195,16 @@ export const PHASES: Phase[] = [
     produces: 'QA verdict (works end-to-end + adversarial findings)',
     needsUser: false,
     optional: false,
+    // Espeja el JSON que el systemPrompt pide: passed, failures[], adversarial.attacksTried (>=1).
+    completionSchema: z.object({
+      passed: z.literal(true),
+      failures: z.array(z.string()),
+      adversarial: z.object({
+        attacksTried: z.array(z.string()).min(1),
+        broke: z.array(z.unknown()),
+        survived: z.array(z.string()),
+      }),
+    }),
   },
   {
     id: 'reconcile',

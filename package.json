@@ -1,17 +1,43 @@
 {
-  "name": "forge-mcp",
+  "name": "@devrik99/forge-mcp",
   "version": "1.0.0",
-  "description": "MCP director del pipeline forge (modo Claude-ejecutor): dice qué fase toca y valida el flujo; el estado persiste en SQLite para reanudar.",
-  "main": "index.js",
+  "description": "MCP director del pipeline forge (modo Claude-ejecutor): dice qué fase toca y valida el flujo con evidencia; el estado persiste en SQLite global para reanudar en cualquier sesión.",
+  "main": "dist/server.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "tsc && node --test dist/*.test.js",
+    "prepublishOnly": "tsc"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "mcp",
+    "claude-code",
+    "pipeline",
+    "workflow",
+    "spec-driven",
+    "model-context-protocol"
+  ],
+  "author": "DevRik",
+  "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DevRik99/forge-mcp.git"
+  },
+  "homepage": "https://github.com/DevRik99/forge-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/DevRik99/forge-mcp/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "skills"
+  ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^3.25.76"

@@ -32,6 +32,23 @@ export interface PhaseArtifact {
   closedAt: number;
 }
 
+/**
+ * Señal explícita de que `closePhaseAndAdvance` no pudo cerrar la fase: el `current_phase` real en la
+ * DB ya no coincidía con `phase` cuando se intentó el UPDATE (otro cierre concurrente ganó la carrera,
+ * o el caller tenía un estado obsoleto). El caller debe refrescar el run y no asumir que avanzó.
+ */
+export class StalePhaseError extends Error {
+  constructor(
+    public readonly runId: string,
+    public readonly phase: string,
+  ) {
+    super(
+      `closePhaseAndAdvance: run ${runId} is no longer at phase "${phase}" (concurrent close or stale caller).`,
+    );
+    this.name = 'StalePhaseError';
+  }
+}
+
 export class Store {
   private readonly _db: DatabaseSync;
 
@@ -98,7 +115,27 @@ export class Store {
     return rows.map((row) => this._rowToRun(row));
   }
 
-  /** Cierra la fase actual con su artefacto y avanza el run a la fase `nextPhase`. */
+  /**
+   * Cierra la fase actual con su artefacto y avanza el run a la fase `nextPhase`.
+   *
+   * Optimistic lock (BUG A/B): el UPDATE solo afecta la fila si `current_phase` en la DB sigue
+   * siendo exactamente `phase` (el WHERE lleva `AND current_phase = ?`). Esto cubre ATÓMICAMENTE
+   * dos casos con la misma condición: (A) una carrera real entre dos cierres concurrentes del mismo
+   * run (el segundo en llegar encuentra `current_phase` ya cambiado por el primero), y (B) un caller
+   * que pasa un `phase` que no es la fase actual real del run (p. ej. una fase vieja tras un avance
+   * que no vio). En ambos casos `changes` da 0 y no hay forma de distinguirlos desde aquí — no hace
+   * falta: el caller solo necesita saber "tu cierre quedó obsoleto, refresca el estado".
+   *
+   * Orden: el UPDATE condicional se intenta PRIMERO. Solo si tuvo éxito (`changes === 1`) se hace el
+   * INSERT del artifact — así nunca queda un artifact huérfano de una fase que en realidad no se
+   * pudo cerrar (evita el data-loss / inconsistencia del orden anterior: INSERT primero, UPDATE
+   * después, donde un UPDATE fallido dejaba el artifact persistido igual).
+   *
+   * Señal de fallo: throw de `StalePhaseError` (en vez de un valor de retorno discriminado) para que
+   * el caller no pueda ignorar el caso por accidente (un `if` olvidado en un valor de retorno pasaría
+   * desapercibido; un throw no capturado explota ruidosamente). El caller (`completePhaseHandler`)
+   * lo captura y traduce a un rejection accionable.
+   */
   closePhaseAndAdvance(
     runId: string,
     phase: string,
@@ -106,15 +143,34 @@ export class Store {
     nextPhase: string,
     now: number,
   ): void {
+    const updateResult = this._db
+      .prepare(
+        'UPDATE runs SET current_phase = ?, updated_at = ? WHERE id = ? AND current_phase = ?',
+      )
+      .run(nextPhase, now, runId, phase);
+    if (Number(updateResult.changes) !== 1) {
+      throw new StalePhaseError(runId, phase);
+    }
     this._db
       .prepare(
         `INSERT OR REPLACE INTO phase_artifacts (run_id, phase, summary, closed_at)
          VALUES (?, ?, ?, ?)`,
       )
       .run(runId, phase, summary, now);
-    this._db
-      .prepare('UPDATE runs SET current_phase = ?, updated_at = ? WHERE id = ?')
-      .run(nextPhase, now, runId);
+  }
+
+  /**
+   * Runs activos cuyo `cwd` coincide con `cwd` (BUG E: con una DB GLOBAL compartida entre proyectos,
+   * puede haber runs activos de MÚLTIPLES proyectos a la vez; esto permite desambiguar "el único
+   * activo" filtrando primero por el proyecto/cwd desde el que se llama). Más recientes primero.
+   */
+  activeRunsForCwd(cwd: string): Run[] {
+    const rows = this._db
+      .prepare(
+        "SELECT * FROM runs WHERE status = 'active' AND cwd = ? ORDER BY updated_at DESC",
+      )
+      .all(cwd) as Record<string, unknown>[];
+    return rows.map((row) => this._rowToRun(row));
   }
 
   /** Marca el run como terminado (todas las fases cerradas). */
@@ -152,9 +208,21 @@ export class Store {
   }
 }
 
-/** El id de la fase que sigue a `phase`, o null si `phase` es la última. */
+/**
+ * El id de la fase que sigue a `phase`, o null si `phase` es genuinamente la última del pipeline.
+ *
+ * BUG C: antes esta función devolvía `null` tanto para "es la última fase" (legítimo) como para "el
+ * id no existe en PHASES" (corrupción de datos — un current_phase inválido en la DB), lo cual es
+ * ambiguo para cualquier caller que no sea `completePhaseHandler` (que hoy evita este caso con un
+ * guard previo, pero esta función debe ser correcta por sí misma, sin depender de ese guard). Ahora
+ * un id desconocido explota con un mensaje que lo nombra; `null` queda reservado solo para el caso
+ * legítimo de última fase.
+ */
 export function nextPhaseId(phase: string): string | null {
   const index = PHASES.findIndex((p) => p.id === phase);
-  if (index < 0 || index >= PHASES.length - 1) return null;
+  if (index < 0) {
+    throw new Error(`nextPhaseId: unknown phase "${phase}"`);
+  }
+  if (index >= PHASES.length - 1) return null;
   return PHASES[index + 1].id;
 }
