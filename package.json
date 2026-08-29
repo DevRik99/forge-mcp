@@ -1,6 +1,6 @@
 {
   "name": "@devrik-tools/forge-mcp",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "MCP director for the forge pipeline: tells Claude which phase to run, validates each phase with real evidence, and persists state in a global SQLite DB to resume across sessions. Claude is the executor.",
   "main": "dist/server.js",
   "scripts": {
@@ -8,7 +8,8 @@
     "start": "node dist/server.js",
     "lint": "eslint .",
     "test": "tsc && node --test dist/*.test.js",
-    "prepublishOnly": "tsc"
+    "postbuild": "node -e \"require('fs').chmodSync('dist/server.js', 0o755)\"",
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "mcp",
