@@ -1,10 +1,10 @@
 /**
- * La ENCICLOPEDIA de skills del MCP, autónoma (no depende del backend). Las 128 skills viven en la
- * carpeta `skills/` de ESTE proyecto (copiadas del arsenal del backend, versionadas). Cada skill es
- * una carpeta con un `SKILL.md` (su contenido) y a veces templates/scripts.
+ * La ENCICLOPEDIA de skills del MCP: autocontenida, las 128 skills viven en la carpeta `skills/` de
+ * ESTE proyecto, versionadas. Cada skill es una carpeta con un `SKILL.md` (su contenido) y a veces
+ * templates/scripts.
  *
- * El MCP las usa como el backend: el SKILL_MAP fija qué skills carga cada fase; cuando Claude ejecuta
- * una fase, pide las skills de esa fase (`forge_skills`) y su contenido (`forge_skill`) para cargarlas.
+ * El SKILL_MAP fija qué skills carga cada fase; cuando Claude ejecuta una fase, pide las skills de esa
+ * fase (`forge_skills`) y su contenido (`forge_skill`) para cargarlas.
  */
 import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -18,8 +18,8 @@ const SKILLS_DIR = join(
 );
 
 /**
- * Skills obligatorias por fase (portado del SKILL_MAP del backend). La clave es un dominio del flujo;
- * las fases del pipeline las referencian. Es el control determinista de qué skill enriquece cada paso.
+ * Skills obligatorias por fase. La clave es un dominio del flujo; las fases del pipeline las
+ * referencian. Es el control determinista de qué skill enriquece cada paso.
  */
 export const SKILL_MAP: Record<string, string[]> = {
   brainstorm: ['brainstorming', 'continuous-discovery', 'jobs-to-be-done'],

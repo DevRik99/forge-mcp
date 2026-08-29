@@ -7,8 +7,8 @@
  * cierre de sesión, una compactación, ni a retomar mañana. El estado del flujo sí debe: así `forge_tareas`
  * lista los runs a medias y `forge_reanudar` retoma desde la fase exacta con las decisiones ya tomadas.
  *
- * NO se guarda el dispatch de workers ni el estado de procesos (eso es del backend pesado): aquí el
- * ejecutor es Claude, que no se cae como un worker. Solo el estado del FLUJO.
+ * No hay despacho a procesos externos que persistir: el ejecutor es Claude, directamente en la sesión
+ * activa. Solo se guarda el estado del FLUJO (fase actual, evidencia de cierre, decisiones tomadas).
  */
 import { DatabaseSync } from 'node:sqlite';
 import { PHASES, FIRST_PHASE_ID } from './phases.js';
