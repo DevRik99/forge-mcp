@@ -74,6 +74,17 @@ export const PHASES: Phase[] = [
     optional: false,
   },
   {
+    id: 'precondition',
+    title: 'Check preconditions',
+    goal: 'Verify the conditions to safely start the build are actually met: required tools/CLIs present, needed access or contracts defined, no blocking unknowns left. Explore the project, do not assume.',
+    systemPrompt:
+      'Check the PRECONDITIONS to safely start this work: needed tools/CLIs present, required access or contracts defined, no blocking unknowns. Explore the project to verify. Return JSON: {"ready":bool,"blockers":["what is missing and why it blocks"],"notes":["..."]}.',
+    skills: [],
+    produces: 'precondition verdict (ready + blockers)',
+    needsUser: false,
+    optional: false,
+  },
+  {
     id: 'design',
     title: 'Define (design, QA-plan, quality)',
     goal: 'Before coding: brainstorm the solution, a design brief (UX/UI), a QA plan with edge cases, and a quality guide. Documents that guide the build; persisted as artifacts.',
@@ -132,6 +143,39 @@ export const PHASES: Phase[] = [
       'You are the QA engineer for an app that was just built and integrated. You work in TWO ordered phases — do phase 1 fully, THEN phase 2. They are different mindsets; keep them separate.\nPHASE 1 — CONFIRM IT WORKS: gain real confidence that the app does what the requirement asks, end to end — not that a test suite is green. Run the app for real, exercise the true user flow for every feature the requirement lists, seed data when a case needs it. This establishes the feature set actually built.\nPHASE 2 — TRY TO BREAK IT (adversarial): now that you KNOW the real features from phase 1, actively attack them. Your goal here is to make the app fail, not to confirm it. For each real feature, push it past its limits: malformed / huge / empty / Unicode / injection inputs (e.g. script/HTML in Markdown → stored/reflected XSS), boundary and overflow values, impossible or out-of-order states, exhausted storage/quota, broken/aborted flows, unexpected navigation, concurrency and rapid repeated actions, and any misuse a real user could stumble into. Report what actually broke (crash, wrong output, security hole, data loss, silent failure) with the concrete input/steps that trigger it. A feature that survives every attack you tried is a pass; one that breaks is a finding.\nYou have full freedom in both phases: read and write anything, install tools, run the app, load whichever QA skills fit (a `.ai/QA-PLAN.md` and design docs exist as input). YOU decide the tools and depth. Never weaken tests or the linter to pass.\nWhen done, return a JSON object: {"passed":bool,"ranTools":[...],"unitPassed":bool,"e2ePassed":bool,"servedOk":bool,"screenshots":[paths],"failures":[precise],"summary":"...","adversarial":{"attacksTried":[precise attack + feature],"broke":[{"feature":"...","input":"...","steps":"...","impact":"crash|wrong-output|security|data-loss|silent-failure"}],"survived":[features that withstood every attack]}}. `passed` reflects phase 1 (it works); phase-2 findings go in `adversarial.broke` even when passed is true.',
     skills: ['playwright-master', 'qa-master', 'browser-qa'],
     produces: 'QA verdict (works end-to-end + adversarial findings)',
+    needsUser: false,
+    optional: false,
+  },
+  {
+    id: 'reconcile',
+    title: 'Reconcile parallel work (post-build)',
+    goal: 'Only if the build ran parallel blocks/subagents that may have duplicated logic or created near-identical utilities: deduplicate into a shared utility and resolve clashing interfaces. Skip if the build was sequential/single-threaded.',
+    systemPrompt:
+      'Several groups of tasks just ran in PARALLEL and may have DUPLICATED logic or created near-identical utilities/types. Reconcile the code: find real duplication/overlap across what was just built, and extract the shared piece into a single well-placed utility (DRY), fixing the call sites. Resolve any clashing interfaces between sibling modules. Do NOT change behavior or weaken tests/lint. Explore the project; touch only what a genuine dedup/merge requires. If there is nothing to reconcile, do nothing. Report briefly what you merged (or that nothing was needed).',
+    skills: ['refactoring-patterns', 'clean-code', 'remove-technical-debt'],
+    produces: 'reconciled code (deduped) or explicit no-op reason',
+    needsUser: false,
+    optional: true,
+  },
+  {
+    id: 'contraste',
+    title: 'Independent review (blind second opinion)',
+    goal: 'As an independent reviewer who does NOT know the QA verdict, explore the finished build and judge from scratch whether it actually does what was asked and is sound. Be adversarial but fair.',
+    systemPrompt:
+      'You are an INDEPENDENT reviewer giving a blind second opinion on a finished build. You do NOT know what earlier checks concluded. Explore the project and judge: does it actually do what the requirement asks, is it sound, are there real defects? Be adversarial but fair. Return JSON: {"verdict":"solid|concerns|broken","findings":[{"severity":"high|med|low","what":"...","where":"..."}],"summary":"..."}.',
+    skills: ['code-quality-master', 'qa-master'],
+    produces: 'independent review verdict (solid/concerns/broken + findings)',
+    needsUser: false,
+    optional: false,
+  },
+  {
+    id: 'reflect',
+    title: 'Reflect on the run',
+    goal: 'Look back on how THIS run went (what passed, what fell back, what failed) and extract concrete improvements to the FLOW itself — not the app.',
+    systemPrompt:
+      'Reflect on how THIS build run went, to improve the pipeline. Given the run outcome (what passed, what fell back, what failed), identify: what worked, what was wasteful or fragile, and concrete improvements to the FLOW (not the app). Return JSON: {"worked":["..."],"issues":["..."],"improvements":["concrete change to the pipeline"]}.',
+    skills: [],
+    produces: 'run reflection (worked/issues/improvements)',
     needsUser: false,
     optional: false,
   },
