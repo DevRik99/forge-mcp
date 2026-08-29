@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * Servidor MCP forge — el DIRECTOR del pipeline para el modo Claude-ejecutor.
  *
