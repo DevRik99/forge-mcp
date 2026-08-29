@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "lint": "eslint ."
   },
   "keywords": [],
   "author": "",
@@ -16,8 +17,18 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@cspell/eslint-plugin": "^10.1.1",
+    "@eslint/js": "^10.0.1",
     "@types/node": "^26.4.0",
-    "typescript": "^5.9.3"
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.6",
+    "eslint-plugin-unicorn": "^74.0.0",
+    "eslint-plugin-unused-imports": "^4.4.1",
+    "globals": "^17.11.0",
+    "prettier": "^3.9.6",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.68.0"
   },
   "allowScripts": {
     "better-sqlite3@13.0.3": true

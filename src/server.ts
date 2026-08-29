@@ -22,15 +22,15 @@ import { Store, nextPhaseId, type Run } from './store.js';
 /** Texto de una fase para devolvérselo a Claude: qué toca hacer y qué cierra la fase. */
 function describePhase(phaseId: string): string {
   const phase = findPhase(phaseId);
-  if (!phase) return `Fase desconocida: ${phaseId}`;
+  if (!phase) return `Unknown phase: ${phaseId}`;
   const userNote = phase.needsUser
-    ? '\n⚠️ Esta fase involucra una DECISIÓN DEL USUARIO: trae las preguntas al usuario, no decidas solo.'
+    ? '\nThis phase involves a USER DECISION: bring the questions to the user, do not decide alone.'
     : '';
   return (
-    `FASE: ${phase.title} (${phase.id})\n` +
-    `OBJETIVO: ${phase.goal}\n` +
-    `CIERRA CON: ${phase.produces}${userNote}\n\n` +
-    `Cuando termines, llama forge_completar_fase con un resumen de lo que hiciste/decidiste.`
+    `PHASE: ${phase.title} (${phase.id})\n` +
+    `GOAL: ${phase.goal}\n` +
+    `CLOSES WITH: ${phase.produces}${userNote}\n\n` +
+    `When done, call forge_completar_fase with a summary of what you did/decided.`
   );
 }
 
@@ -39,9 +39,9 @@ function progressOf(store: Store, run: Run): string {
   const artifacts = store.artifactsOf(run.id);
   const doneIds = new Set(artifacts.map((a) => a.phase));
   const lines = PHASES.map((phase) => {
-    if (doneIds.has(phase.id)) return `✓ ${phase.title}`;
-    if (phase.id === run.currentPhase) return `▶ ${phase.title} (AQUÍ)`;
-    return `· ${phase.title}`;
+    if (doneIds.has(phase.id)) return `[x] ${phase.title}`;
+    if (phase.id === run.currentPhase) return `[>] ${phase.title} (HERE)`;
+    return `[ ] ${phase.title}`;
   });
   return lines.join('\n');
 }
@@ -49,110 +49,116 @@ function progressOf(store: Store, run: Run): string {
 export function buildServer(store: Store, now: () => number): McpServer {
   const server = new McpServer({ name: 'forge', version: '0.1.0' });
 
+  // Arranca un run nuevo del pipeline y devuelve la primera fase.
   server.registerTool(
     'forge_iniciar',
     {
       description:
-        'Arranca un run nuevo del pipeline forge para un pedido. Devuelve la primera fase (clasificar) y su objetivo. A partir de aquí, sigue el flujo fase por fase usando forge_siguiente y forge_completar_fase — no te saltes fases.',
+        'Start a new forge pipeline run for a request. Returns the first phase (classify) and its goal. From here, follow the flow phase by phase using forge_siguiente and forge_completar_fase — do not skip phases.',
       inputSchema: {
-        request: z.string().describe('El pedido del usuario, textual.'),
-        cwd: z
-          .string()
-          .describe('Directorio del proyecto donde se ejecuta el pipeline.'),
+        request: z.string().describe("The user's request, verbatim."),
+        cwd: z.string().describe('Project directory where the pipeline runs.'),
       },
     },
-    async ({ request, cwd }) => {
-      const runId = `run-${now()}`;
+    ({ request, cwd }) => {
+      const runId = `run-${String(now())}`;
       const run = store.createRun(runId, request, cwd, now());
       return {
         content: [
           {
             type: 'text',
             text:
-              `Run ${runId} iniciado.\n\n${describePhase(run.currentPhase)}\n\n` +
-              `— El pipeline forge te guía fase por fase. No escribas código ni termines hasta cerrar todas las fases con forge_completar_fase.`,
+              `Run ${runId} started.\n\n${describePhase(run.currentPhase)}\n\n` +
+              `— The forge pipeline guides you phase by phase. Do not write code or finish until every phase is closed with forge_completar_fase.`,
           },
         ],
       };
     },
   );
 
+  // En qué fase está un run y su progreso.
   server.registerTool(
     'forge_estado',
     {
       description:
-        'Muestra en qué fase está un run y su progreso (qué se hizo, qué falta). Si no das runId y hay un solo run activo, usa ese.',
+        'Shows which phase a run is in and its progress (done / pending). If no runId is given and exactly one run is active, uses that one.',
       inputSchema: {
         runId: z
           .string()
           .optional()
-          .describe('Id del run; opcional si hay uno solo activo.'),
+          .describe('Run id; optional when exactly one run is active.'),
       },
     },
-    async ({ runId }) => {
+    ({ runId }) => {
       const run = resolveRun(store, runId);
       if (!run) return notFound(runId);
       return {
         content: [
           {
             type: 'text',
-            text:
-              `Run ${run.id} — ${run.status}\nPedido: ${run.request}\n\nProgreso:\n${progressOf(store, run)}`,
+            text: `Run ${run.id} — ${run.status}\nRequest: ${run.request}\n\nProgress:\n${progressOf(store, run)}`,
           },
         ],
       };
     },
   );
 
+  // La fase actual con su objetivo detallado.
   server.registerTool(
     'forge_siguiente',
     {
       description:
-        'Devuelve la fase ACTUAL con su objetivo detallado: qué debes hacer ahora. Llama esto cuando no sepas qué sigue.',
+        'Returns the CURRENT phase with its detailed goal: what to do now. Call this when you are unsure what comes next.',
       inputSchema: {
         runId: z
           .string()
           .optional()
-          .describe('Id del run; opcional si hay uno solo activo.'),
+          .describe('Run id; optional when exactly one run is active.'),
       },
     },
-    async ({ runId }) => {
+    ({ runId }) => {
       const run = resolveRun(store, runId);
       if (!run) return notFound(runId);
       if (run.status === 'done') {
         return {
           content: [
-            { type: 'text', text: `Run ${run.id} ya terminó todas sus fases.` },
+            {
+              type: 'text',
+              text: `Run ${run.id} already finished all phases.`,
+            },
           ],
         };
       }
-      return { content: [{ type: 'text', text: describePhase(run.currentPhase) }] };
+      return {
+        content: [{ type: 'text', text: describePhase(run.currentPhase) }],
+      };
     },
   );
 
+  // Cierra la fase actual y avanza a la siguiente.
   server.registerTool(
     'forge_completar_fase',
     {
       description:
-        'Cierra la fase ACTUAL con un resumen de lo que hiciste/decidiste, y avanza a la siguiente. El resumen se persiste (para reanudar). No cierres una fase sin haberla hecho de verdad.',
+        'Closes the CURRENT phase with a summary of what you did/decided, and advances to the next one. The summary is persisted (for resuming). Do not close a phase you have not actually done.',
       inputSchema: {
         runId: z
           .string()
           .optional()
-          .describe('Id del run; opcional si hay uno solo activo.'),
+          .describe('Run id; optional when exactly one run is active.'),
         summary: z
           .string()
           .describe(
-            'Qué hiciste/decidiste en esta fase (el artefacto que la da por cerrada).',
+            'What you did/decided in this phase (the artifact that closes it).',
           ),
       },
     },
-    async ({ runId, summary }) => {
+    ({ runId, summary }) => {
       const run = resolveRun(store, runId);
       if (!run) return notFound(runId);
       if (run.status === 'done') {
         return {
-          content: [{ type: 'text', text: `Run ${run.id} ya terminó.` }],
+          content: [{ type: 'text', text: `Run ${run.id} already finished.` }],
         };
       }
       const next = nextPhaseId(run.currentPhase);
@@ -169,46 +175,53 @@ export function buildServer(store: Store, now: () => number): McpServer {
           content: [
             {
               type: 'text',
-              text: `Fase "${run.currentPhase}" cerrada. Era la última — run ${run.id} COMPLETO. Todas las fases del pipeline pasaron.`,
+              text: `Phase "${run.currentPhase}" closed. It was the last one — run ${run.id} COMPLETE. Every pipeline phase passed.`,
             },
           ],
         };
       }
-      store.closePhaseAndAdvance(run.id, run.currentPhase, summary, next, now());
+      store.closePhaseAndAdvance(
+        run.id,
+        run.currentPhase,
+        summary,
+        next,
+        now(),
+      );
       return {
         content: [
           {
             type: 'text',
-            text: `Fase "${run.currentPhase}" cerrada. Ahora:\n\n${describePhase(next)}`,
+            text: `Phase "${run.currentPhase}" closed. Now:\n\n${describePhase(next)}`,
           },
         ],
       };
     },
   );
 
+  // Lista los runs activos (para reanudar desde cualquier sesión).
   server.registerTool(
     'forge_tareas',
     {
       description:
-        'Lista los runs activos del pipeline (para reanudar desde cualquier sesión). Muestra id, pedido y fase actual.',
+        'Lists the active pipeline runs (to resume from any session). Shows id, request and current phase.',
       inputSchema: {},
     },
-    async () => {
+    () => {
       const runs = store.activeRuns();
       if (runs.length === 0) {
         return {
-          content: [{ type: 'text', text: 'No hay runs activos.' }],
+          content: [{ type: 'text', text: 'No active runs.' }],
         };
       }
       const lines = runs.map(
         (run) =>
-          `- ${run.id} · fase ${run.currentPhase} · ${run.request.slice(0, 60)}`,
+          `- ${run.id} · phase ${run.currentPhase} · ${run.request.slice(0, 60)}`,
       );
       return {
         content: [
           {
             type: 'text',
-            text: `Runs activos (${runs.length}):\n${lines.join('\n')}\n\nReanuda uno con forge_siguiente runId=<id>.`,
+            text: `Active runs (${String(runs.length)}):\n${lines.join('\n')}\n\nResume one with forge_siguiente runId=<id>.`,
           },
         ],
       };
@@ -225,6 +238,7 @@ function resolveRun(store: Store, runId?: string): Run | null {
   return active.length === 1 ? active[0] : null;
 }
 
+/** Respuesta cuando no se encuentra el run pedido. */
 function notFound(runId?: string): {
   content: { type: 'text'; text: string }[];
 } {
@@ -233,8 +247,8 @@ function notFound(runId?: string): {
       {
         type: 'text',
         text: runId
-          ? `No hay un run con id ${runId}.`
-          : 'No se pudo inferir el run (hay varios o ninguno activo). Pasa runId, o mira forge_tareas.',
+          ? `No run with id ${runId}.`
+          : 'Could not infer the run (several or none active). Pass runId, or check forge_tareas.',
       },
     ],
   };
@@ -242,8 +256,8 @@ function notFound(runId?: string): {
 
 /** Arranque: abre el store y sirve por stdio (como lo lanza el cliente MCP). */
 async function main(): Promise<void> {
-  const dbPath = process.env.FORGE_MCP_DB ?? 'forge-mcp.db';
-  const store = new Store(dbPath);
+  const databasePath = process.env.FORGE_MCP_DB ?? 'forge-mcp.db';
+  const store = new Store(databasePath);
   const server = buildServer(store, () => Date.now());
   const transport = new StdioServerTransport();
   await server.connect(transport);

@@ -35,8 +35,8 @@ export interface PhaseArtifact {
 export class Store {
   private readonly _db: DatabaseSync;
 
-  constructor(dbPath: string) {
-    this._db = new DatabaseSync(dbPath);
+  constructor(databasePath: string) {
+    this._db = new DatabaseSync(databasePath);
     this._db.exec('PRAGMA journal_mode = WAL');
     this._migrate();
   }
@@ -70,13 +70,21 @@ export class Store {
          VALUES (?, ?, ?, ?, 'active', ?, ?)`,
       )
       .run(id, request, cwd, FIRST_PHASE_ID, now, now);
-    return this.getRun(id)!;
+    // recién insertado con estos valores: se arma el Run directo (evita un SELECT + el non-null assertion).
+    return {
+      id,
+      request,
+      cwd,
+      currentPhase: FIRST_PHASE_ID,
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    };
   }
 
   getRun(id: string): Run | null {
-    const row = this._db
-      .prepare('SELECT * FROM runs WHERE id = ?')
-      .get(id) as Record<string, unknown> | undefined;
+    const row = this._db.prepare('SELECT * FROM runs WHERE id = ?').get(id) as
+      Record<string, unknown> | undefined;
     return row ? this._rowToRun(row) : null;
   }
 
@@ -105,18 +113,14 @@ export class Store {
       )
       .run(runId, phase, summary, now);
     this._db
-      .prepare(
-        'UPDATE runs SET current_phase = ?, updated_at = ? WHERE id = ?',
-      )
+      .prepare('UPDATE runs SET current_phase = ?, updated_at = ? WHERE id = ?')
       .run(nextPhase, now, runId);
   }
 
   /** Marca el run como terminado (todas las fases cerradas). */
   finishRun(runId: string, now: number): void {
     this._db
-      .prepare(
-        "UPDATE runs SET status = 'done', updated_at = ? WHERE id = ?",
-      )
+      .prepare("UPDATE runs SET status = 'done', updated_at = ? WHERE id = ?")
       .run(now, runId);
   }
 

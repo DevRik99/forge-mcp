@@ -1,5 +1,5 @@
 {
-  "razon": "scaffold inicial del proyecto forge-mcp NUEVO (MCP que dirige el pipeline forge, camino alternativo Claude-ejecutor): estructura base + definicion de fases + store SQLite + servidor MCP. Proyecto nuevo desde cero, sin codigo previo que proteger, reversible (es un repo aparte). El diseño se acordo con el usuario en conversacion",
-  "desde": "2026-08-29T04:53:19.108Z",
-  "hasta": "2026-08-29T05:23:19.109Z"
+  "razon": "traer el eslint config estricto del backend al forge-mcp: base universal (TS strictTypeChecked+stylistic, cspell, unicorn, unused-imports, naming-convention, safety, prettier) quitando los bloques NestJS-especificos (controller/dto/entity/module/guard/pipe/interceptor/filter/middleware/strategy/enum) que no aplican a un MCP TS puro. Local, conocido, reversible",
+  "desde": "2026-08-29T04:58:10.476Z",
+  "hasta": "2026-08-29T05:28:10.476Z"
 }
